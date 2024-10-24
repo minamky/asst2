@@ -93,7 +93,6 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
                                 const std::vector<TaskID>& deps);
         void sync();
     private:
-    std::unordered_map<TaskID, std::mutex> waiting_map_locks;
         void updateDependency_Queue(TaskID);
         void workerThread();
         int num_batches_done;
@@ -101,13 +100,14 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         int num_threads;
         std::vector<std::thread> threads;
         std::mutex mtx;
+    std::mutex batch_mtx;
         std::mutex dependency_mtx;
     //std::mutex depsLock;
         std::condition_variable cv;           // wake up sleeping threads
         std::condition_variable cv_finished;  // tells sync when all batches are done
         int stop = false;
 
-    std::set<TaskID> finishedTasks;
+        std::set<TaskID> finishedTasks;
         int threads_sleeping;
         
 
