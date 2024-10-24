@@ -88,31 +88,29 @@ private:
  */
 class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
     public:
+        int max_threads;
+        std::vector<std::thread> workers;
+        IRunnable* global_runnable;
+
+        int total_tasks;
+        std::mutex total_tasks_lock;
+  
+        int tasks_remaining;
+        std::condition_variable tasks_remaining_cv;
+  
+        int tasks_completed;
+        std::condition_variable tasks_completed_cv;
+
+        bool kill;
+  
         TaskSystemParallelThreadPoolSleeping(int num_threads);
         ~TaskSystemParallelThreadPoolSleeping();
         const char* name();
+        void workerThread();
         void run(IRunnable* runnable, int num_total_tasks);
         TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                 const std::vector<TaskID>& deps);
         void sync();
-    
-    private:
-       std::vector<std::thread> threads;
-       int num_threads;
-   
-       IRunnable* cur_runnable;
-       int total_tasks;
-       int threads_sleeping;
-   
-       std::mutex mtx;
-    
-       void workerThread();
-       int counter;
-       std::atomic<int> tasks_completed;
-       std::condition_variable cv;
-       std::condition_variable cv_finished;
-    //bool stop = false;
-    std::atomic<int> stop;
 };
 
 #endif
