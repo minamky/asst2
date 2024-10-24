@@ -348,9 +348,9 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
    // Implementations are free to add new class member variables
    // (requiring changes to tasksys.h).
    //
-   this->cur_runnable = NULL;
+  
    this->num_threads = num_threads;
-   //this->threads_sleeping = 0;
+   this->threads_sleeping = 0;
    this->num_batches_done = 0;
    this->next_task_id = 0;
    this->stop = false;
@@ -361,12 +361,17 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
+   //
+   // TODO: CS149 student implementations may decide to perform cleanup
+   // operations (such as thread pool shutdown construction) here.
+   // Implementations are free to add new class member variables
+   // (requiring changes to tasksys.h).
+   //
    
-   mtx.lock();
+   std::unique_lock<std::mutex> lock(mtx);
    stop = true;
-   mtx.unlock();
-
    cv.notify_all();
+   lock.unlock();
   
    for (auto& thread: threads){
        thread.join();
@@ -382,7 +387,7 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
                                                    const std::vector<TaskID>& deps) {
    TaskID task_id;
    {
-       std::unique_lock<std::mutex> lock(mtx);
+       std::unique_lock<std::mutex> info_lock(batch_mtx);
        task_id = next_task_id++;
        tasksCompletedPerBatch[task_id] = 0;
    }
@@ -429,12 +434,12 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
        }
        
        if (stop) {
-           lock.unlock();
            break;
        }
 
        auto task = ready_queue.front();
        ready_queue.pop();
+
        lock.unlock();
        
        IRunnable* cur_runnable = std::get<0>(task);
@@ -443,79 +448,73 @@ void TaskSystemParallelThreadPoolSleeping::workerThread() {
        int taskID = std::get<1>(task);
        cur_runnable->runTask(cur_task, total_tasks);
        
-       lock.lock();
+       std::unique_lock<std::mutex> info_lock(batch_mtx);
+       
        tasksCompletedPerBatch[taskID]++;
        if (tasksCompletedPerBatch[taskID] == total_tasks) {
-           lock.unlock();
+           info_lock.unlock();
            updateDependency_Queue(taskID);
        } else {
-           lock.unlock();
+           info_lock.unlock();
        }
    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::updateDependency_Queue(TaskID completed_task) {
+    
    std::vector<std::tuple<IRunnable*, TaskID, int>> tasksToSchedule;
    
-       //consider doing one lock for each task id - try to reduce number of time you keep lock while keeping the implementation correct
-       //also look at improvements for single threaded version
+   {
        std::unique_lock<std::mutex> depsLock(dependency_mtx);
        finishedTasks.insert(completed_task);
        
-       
        auto it = waiting_map.find(completed_task);
-       depsLock.unlock();
        
        if (it != waiting_map.end()) {
-               for (auto taskTuple: it->second) {
-                   TaskID waitingTaskID = std::get<1>(taskTuple);
-                   
-                   std::unique_lock<std::mutex> waiting_task_lock(waiting_map_locks[waitingTaskID]); // when decrementing, obtain lock
-                   dependency_counter[waitingTaskID]--;
+           for (auto& taskTuple: it->second) {
+               TaskID waitingTaskID = std::get<1>(taskTuple);
+               dependency_counter[waitingTaskID]--;
                
-                   if (dependency_counter[waitingTaskID] == 0) { 
-                       tasksToSchedule.push_back(taskTuple);
-                       //dependency_counter.erase(waitingTaskID);
-                   }
-                   waiting_task_lock.unlock();
-                   
+               if (dependency_counter[waitingTaskID] == 0) {
+                   tasksToSchedule.push_back(taskTuple);
+                   dependency_counter.erase(waitingTaskID);
                }
-               
-               depsLock.lock();
-               //waiting_map.erase(it);
-               depsLock.unlock();
+           }
+           waiting_map.erase(it);
        }
-       
-   
-   {
-       std::unique_lock<std::mutex> lock(mtx);
-       num_batches_done++;
-       
-       for (const auto& taskTuple : tasksToSchedule) {
+   }
+      
+   for (const auto& taskTuple : tasksToSchedule) {
            IRunnable* current = std::get<0>(taskTuple);
            TaskID waitingTaskID = std::get<1>(taskTuple);
            int total_tasks = std::get<2>(taskTuple);
            
+           std::unique_lock<std::mutex> lock(mtx);
            for (int i = 0; i < total_tasks; i++) {
+               
                ready_queue.push(std::make_tuple(current, waitingTaskID, i, total_tasks));
            }
-       }
+           lock.unlock();
+   }
+
        
-       if (!tasksToSchedule.empty()) {
+   if (!tasksToSchedule.empty()) {
            cv.notify_all();
-       }
-       
+   }
+
+   {
+       std::unique_lock<std::mutex> batch_lock(batch_mtx);
+       num_batches_done++;
        if (num_batches_done >= next_task_id) {
            cv_finished.notify_all();
        }
    }
+  
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
-   std::unique_lock<std::mutex> lock(mtx);
+   std::unique_lock<std::mutex> batch_lock(batch_mtx);
    while(num_batches_done < next_task_id) {
-       cv_finished.wait(lock);
+       cv_finished.wait(batch_lock);
    }
 }
-
-//release lock and then call notify - optimize code
