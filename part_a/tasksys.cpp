@@ -222,12 +222,12 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
 }
 
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): ITaskSystem(num_threads) {
-    cur_runnable = NULL;      
-    tasks_remaining = 0;
-    total_tasks = 0;
-    tasks_completed = 0;
-    num_threads = num_threads;
-    stop = false;
+    this->cur_runnable = NULL;      
+    this->tasks_remaining = 0;
+    this->total_tasks = 0;
+    this->tasks_completed = 0;
+    this->num_threads = num_threads;
+    this->stop = false;
 
     for (int i = 0; i < num_threads; i++){
         threads.push_back(std::thread(&TaskSystemParallelThreadPoolSleeping::workerThread, this));
@@ -261,9 +261,8 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     cv.notify_all();
     
     std::unique_lock<std::mutex> lock(mtx);
-
     while (tasks_completed < total_tasks){
-        cv_finished.wait(lock);  //wait until last task finishes
+        cv_finished.wait(lock); 
     }
     lock.unlock();
 }
@@ -282,8 +281,8 @@ void TaskSystemParallelThreadPoolSleeping::workerThread(){
            break;
         }
 
-        int batch_size = 2;
-	if (tasks_remaining < 32){
+        int batch_size = 2;         // process two tasks per loop iteration
+	if (tasks_remaining < 32){  // when last 32 tasks, process one task per loop iteration
 	  batch_size = 1;
 	}
 	
@@ -291,23 +290,20 @@ void TaskSystemParallelThreadPoolSleeping::workerThread(){
 	int temp_total = total_tasks;
 	tasks_remaining -= batch_size;
          
-         lock.unlock();
-	   cur_runnable->runTask(task_count, temp_total);
-	   if (batch_size==2){
-	     
-	        cur_runnable->runTask(task_count+1, temp_total);
-	   }
-	   
-	   lock.lock();
-         tasks_completed += batch_size;
-         
-         if (tasks_completed >= total_tasks) {
-	   lock.unlock();
-             cv_finished.notify_all(); // wake up run after last task finishes
-         }else{
-	   lock.unlock();
+        lock.unlock();
+	cur_runnable->runTask(task_count, temp_total);    
+	if (batch_size==2){
+		cur_runnable->runTask(task_count+1, temp_total);
+	}
+	lock.lock();
+	    
+        tasks_completed += batch_size;
+        if (tasks_completed >= total_tasks) {
+		lock.unlock();
+		cv_finished.notify_all(); // wake up run after last task finishes
+         } else {
+		lock.unlock();
 	 }
-         
     }
 }
 
